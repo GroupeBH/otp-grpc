@@ -1,0 +1,50 @@
+{
+  "family": "zwanga-otp",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "<existing-ecs-execution-role-arn>",
+  "taskRoleArn": "<otp-task-role-arn>",
+  "containerDefinitions": [
+    {
+      "name": "otp-service",
+      "image": "<account-id>.dkr.ecr.<region>.amazonaws.com/zwanga-otp:<immutable-image-tag>",
+      "essential": true,
+      "portMappings": [
+        { "name": "otp-grpc", "containerPort": 50051, "hostPort": 50051, "protocol": "tcp", "appProtocol": "grpc" }
+      ],
+      "environment": [
+        { "name": "APP_ENV", "value": "production" },
+        { "name": "OTP_LISTEN_ADDRESS", "value": ":50051" },
+        { "name": "OTP_REDIS_ADDRESS", "value": "<redis-private-endpoint>:6379" },
+        { "name": "OTP_REDIS_TLS", "value": "true" },
+        { "name": "OTP_SMS_PROVIDER", "value": "mobishastra" },
+        { "name": "MOBISHASTRA_COUNTRY_CODE", "value": "ALL" }
+      ],
+      "secrets": [
+        { "name": "OTP_HASH_KEY", "valueFrom": "<otp-hash-key-secret-arn>" },
+        { "name": "OTP_SERVICE_TOKEN", "valueFrom": "<otp-service-token-secret-arn>" },
+        { "name": "OTP_REDIS_PASSWORD", "valueFrom": "<redis-password-secret-arn>" },
+        { "name": "MOBISHASTRA_USER", "valueFrom": "<mobishastra-user-secret-arn>" },
+        { "name": "MOBISHASTRA_PASSWORD", "valueFrom": "<mobishastra-password-secret-arn>" },
+        { "name": "MOBISHASTRA_SENDER_ID", "valueFrom": "<mobishastra-sender-id-secret-arn>" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/zwanga-otp",
+          "awslogs-region": "<region>",
+          "awslogs-stream-prefix": "otp"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD", "/otp-server", "health"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+.git
+.env
+bin
+coverage
+*.md
+.gocache
+.gomodcache
+backend-staging
+backend-integration.patch
+infra
+docs

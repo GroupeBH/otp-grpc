@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package otp.v1;
+
+option go_package = "otp-grpc/gen/otp/v1;otpv1";
+
+service OtpService {
+  rpc SendOtp(SendOtpRequest) returns (SendOtpResponse);
+  rpc VerifyOtp(VerifyOtpRequest) returns (VerifyOtpResponse);
+  rpc ResendOtp(ResendOtpRequest) returns (SendOtpResponse);
+  rpc CheckOtpStatus(CheckOtpStatusRequest) returns (CheckOtpStatusResponse);
+  rpc ConsumeProof(ConsumeProofRequest) returns (ConsumeProofResponse);
+}
+
+message SendOtpRequest {
+  string phone = 1; // E.164
+  string purpose = 2;
+  string idempotency_key = 3;
+  string requester_ip = 4;
+  string identity_id = 5;
+}
+
+message SendOtpResponse {
+  string challenge_id = 1;
+  int32 expires_in_seconds = 2;
+  string status = 3; // SENT or PENDING
+}
+
+message VerifyOtpRequest {
+  string phone = 1;
+  string purpose = 2;
+  string code = 3;
+}
+
+message VerifyOtpResponse {
+  string status = 1; // VALID, INVALID, EXPIRED, LOCKED
+  string proof = 2; // only on VALID; pass to ConsumeProof
+  int32 proof_expires_in_seconds = 3;
+}
+
+message ResendOtpRequest {
+  string phone = 1;
+  string purpose = 2;
+  string challenge_id = 3;
+  string idempotency_key = 4;
+  string requester_ip = 5;
+  string identity_id = 6;
+}
+
+message CheckOtpStatusRequest { string challenge_id = 1; }
+message CheckOtpStatusResponse {
+  string status = 1; // PENDING, VERIFIED, EXPIRED, LOCKED
+  int32 expires_in_seconds = 2;
+}
+
+message ConsumeProofRequest {
+  string phone = 1;
+  string purpose = 2;
+  string proof = 3;
+}
+message ConsumeProofResponse { bool valid = 1; }

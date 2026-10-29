@@ -1,0 +1,34 @@
+services:
+  api:
+    environment:
+      OTP_GRPC_ENABLED: "true"
+      OTP_GRPC_TARGET: otp-service:50051
+      OTP_SERVICE_TOKEN: ${OTP_SERVICE_TOKEN:-}
+    depends_on:
+      otp-service:
+        condition: service_healthy
+
+  otp-service:
+    build:
+      context: ../microservices-zwanga/otp-grpc
+      dockerfile: Dockerfile
+    environment:
+      OTP_LISTEN_ADDRESS: :50051
+      OTP_REDIS_ADDRESS: redis:6379
+      OTP_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      OTP_HASH_KEY: ${OTP_HASH_KEY:?Set OTP_HASH_KEY to a random secret of at least 32 characters}
+      OTP_SERVICE_TOKEN: ${OTP_SERVICE_TOKEN:-}
+      OTP_SMS_PROVIDER: mock
+      APP_ENV: development
+    networks:
+      - zwanga-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/otp-server", "health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+

@@ -1,0 +1,19 @@
+{
+  "otpService": {
+    "enabled": true,
+    "namespace": "zwanga.internal",
+    "services": [
+      {
+        "portName": "otp-grpc",
+        "discoveryName": "otp-service",
+        "clientAliases": [
+          { "dnsName": "otp-service", "port": 50051 }
+        ]
+      }
+    ]
+  },
+  "nestjsClientService": {
+    "enabled": true,
+    "namespace": "zwanga.internal"
+  }
+}

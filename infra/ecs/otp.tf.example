@@ -1,0 +1,156 @@
+# Review and merge into the existing zwanga-backend/infra-aws Terraform module.
+# This template is intentionally not loaded by Terraform until copied as .tf.
+
+variable "otp_vpc_id" { type = string }
+variable "otp_private_subnet_ids" { type = list(string) }
+variable "otp_cluster_arn" { type = string }
+variable "otp_backend_security_group_id" { type = string }
+variable "otp_redis_security_group_id" { type = string }
+variable "otp_redis_address" { type = string }
+variable "otp_execution_role_arn" { type = string }
+variable "otp_task_role_arn" { type = string }
+variable "otp_kms_key_arn" { type = string }
+variable "otp_image_tag" { type = string }
+variable "otp_secret_arns" {
+  type = map(string)
+  # Required keys: OTP_HASH_KEY, OTP_SERVICE_TOKEN, OTP_REDIS_PASSWORD,
+  # MOBISHASTRA_USER, MOBISHASTRA_PASSWORD, MOBISHASTRA_SENDER_ID.
+}
+variable "otp_aws_region" { type = string }
+variable "otp_service_connect_namespace_arn" {
+  type    = string
+  default = ""
+}
+
+resource "aws_ecr_repository" "otp" {
+  name                 = "zwanga-otp"
+  image_tag_mutability = "IMMUTABLE"
+  image_scanning_configuration { scan_on_push = true }
+  encryption_configuration {
+    encryption_type = "KMS"
+    kms_key         = var.otp_kms_key_arn
+  }
+}
+
+resource "aws_cloudwatch_log_group" "otp" {
+  name              = "/ecs/zwanga-otp"
+  retention_in_days = 30
+}
+
+resource "aws_service_discovery_http_namespace" "otp" {
+  count = var.otp_service_connect_namespace_arn == "" ? 1 : 0
+  name  = "zwanga.internal"
+}
+
+locals {
+  otp_namespace_arn = var.otp_service_connect_namespace_arn != "" ? var.otp_service_connect_namespace_arn : aws_service_discovery_http_namespace.otp[0].arn
+}
+
+resource "aws_security_group" "otp" {
+  name   = "zwanga-otp"
+  vpc_id = var.otp_vpc_id
+}
+resource "aws_vpc_security_group_ingress_rule" "otp_from_backend" {
+  security_group_id            = aws_security_group.otp.id
+  referenced_security_group_id = var.otp_backend_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = 50051
+  to_port                      = 50051
+}
+resource "aws_vpc_security_group_egress_rule" "otp_to_redis" {
+  security_group_id            = aws_security_group.otp.id
+  referenced_security_group_id = var.otp_redis_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = 6379
+  to_port                      = 6379
+}
+resource "aws_vpc_security_group_egress_rule" "otp_https" {
+  security_group_id = aws_security_group.otp.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+}
+
+resource "aws_ecs_task_definition" "otp" {
+  family                   = "zwanga-otp"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = "512"
+  memory                   = "1024"
+  execution_role_arn       = var.otp_execution_role_arn
+  task_role_arn            = var.otp_task_role_arn
+  container_definitions = jsonencode([{
+    name      = "otp-service"
+    image     = "${aws_ecr_repository.otp.repository_url}:${var.otp_image_tag}"
+    essential = true
+    portMappings = [{
+      name          = "otp-grpc"
+      containerPort = 50051
+      hostPort      = 50051
+      protocol      = "tcp"
+      appProtocol   = "grpc"
+    }]
+    environment = [
+      { name = "APP_ENV", value = "production" },
+      { name = "OTP_LISTEN_ADDRESS", value = ":50051" },
+      { name = "OTP_REDIS_ADDRESS", value = var.otp_redis_address },
+      { name = "OTP_REDIS_TLS", value = "true" },
+      { name = "OTP_SMS_PROVIDER", value = "mobishastra" },
+    ]
+    secrets = [for name, arn in var.otp_secret_arns : { name = name, valueFrom = arn }]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.otp.name
+        awslogs-region        = var.otp_aws_region
+        awslogs-stream-prefix = "otp"
+      }
+    }
+    healthCheck = {
+      command     = ["CMD", "/otp-server", "health"]
+      interval    = 30
+      timeout     = 5
+      retries     = 3
+      startPeriod = 30
+    }
+  }])
+}
+
+resource "aws_ecs_service" "otp" {
+  name            = "zwanga-otp"
+  cluster         = var.otp_cluster_arn
+  task_definition = aws_ecs_task_definition.otp.arn
+  launch_type     = "FARGATE"
+  desired_count   = 1
+
+  network_configuration {
+    subnets          = var.otp_private_subnet_ids
+    security_groups  = [aws_security_group.otp.id]
+    assign_public_ip = false
+  }
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+  service_connect_configuration {
+    enabled   = true
+    namespace = local.otp_namespace_arn
+    service {
+      port_name      = "otp-grpc"
+      discovery_name = "otp-service"
+      client_alias {
+        dns_name = "otp-service"
+        port     = 50051
+      }
+    }
+  }
+}
+
+# Add this block to the existing NestJS aws_ecs_service resource:
+# service_connect_configuration {
+#   enabled   = true
+#   namespace = local.otp_namespace_arn
+# }
+# Set OTP_GRPC_TARGET=otp-service:50051 and OTP_GRPC_ENABLED=true there only
+# after the OTP service has passed health checks and the Keccel code TTL elapsed.
